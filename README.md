@@ -1,6 +1,6 @@
-# AMS L0 PG GLUE DISPENSER
+# PG GLUE DISPENSER
 
-Software to control the Glue Dispenser for the L0 integration 
+Software to control the Glue Dispenser
 
 ## Prerequisites
 

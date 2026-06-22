@@ -5,6 +5,9 @@ on:
     branches: 
       - main
 
+permissions:
+  contents: write
+
 jobs:
   build:
     if: contains(github.event.head_commit.message, 'Release')
@@ -29,17 +32,17 @@ jobs:
         run: pip install pyinstaller matplotlib pyqt5 PySerial
 
       - name: Package Application
-        run: pyinstaller src/amsl0_glue_dispenser.spec
+        run: pyinstaller src/glue_dispenser.spec
 
       - name: Create temp application directory
         run: mkdir -p application
 
       - name: Copy application to temp directory
-        run: cp dist/amsl0_glue_dispenser.exe application/
+        run: cp dist/glue_dispenser.exe application/
 
       - name: Copy additional files
         run: |
-          cp src/amsl0_glue_dispenser.spec application/
+          cp src/glue_dispenser.spec application/
           cp src/icon.ico application/
           cp src/logo.png application/
           cp src/GCode_writer.ipynb application/
@@ -47,24 +50,14 @@ jobs:
 
       - name: Zip application folder
         run: powershell Compress-Archive -Path application -DestinationPath application.zip
-        
-      - name: Create Release
-        id: create_release
-        uses: actions/create-release@v1.1.4
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Ensure the token is passed
+
+      - name: Create Release and Upload Asset
+        uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ env.RELEASE_TAG }}
-          release_name: ${{ env.RELEASE_TAG }}
+          name: ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: false
-
-      - name: Upload Release Asset
-        uses: actions/upload-release-asset@v1
+          files: application.zip
         env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}  # Ensure the token is passed
-        with:
-          upload_url: ${{ steps.create_release.outputs.upload_url }}
-          asset_path: application.zip
-          asset_name: application.zip
-          asset_content_type: application/octet-stream
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

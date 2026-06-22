@@ -29,7 +29,7 @@ class GRBLController(QWidget):
         """
         Initialize the GRBLController widget.
 
-        This constructor sets up the main window for the AMS PG GLUE DISPENSER application, 
+        This constructor sets up the main window for the PG GLUE DISPENSER application, 
         initializes various attributes related to the serial communication, toolpath handling, 
         and UI components. It also connects signals for status updates and first block detection, 
         and initializes the user interface and available serial ports.
@@ -49,7 +49,7 @@ class GRBLController(QWidget):
 
         super().__init__()
 
-        self.setWindowTitle("AMS PG GLUE DISPENSER")
+        self.setWindowTitle("PG GLUE DISPENSER")
         self.resize(800, 600)
 
         self.serial_port = None

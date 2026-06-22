@@ -1,7 +1,7 @@
 # -*- mode: python ; coding: utf-8 -*-
 
 a = Analysis(
-    ['amsl0_glue_dispenser.py'],
+    ['glue_dispenser.py'],
     pathex=[],
     binaries=[],
     datas=[],
@@ -22,7 +22,7 @@ exe = EXE(
     a.binaries,
     a.datas,
     [],
-    name='amsl0_glue_dispenser',
+    name='glue_dispenser',
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
