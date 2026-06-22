@@ -12,6 +12,7 @@ from PyQt5.QtCore import pyqtSignal, QObject
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
 from matplotlib.figure import Figure
+import matplotlib.patches as patches
 import serial
 import serial.tools.list_ports
 import os.path
@@ -757,7 +758,10 @@ class GRBLController(QWidget):
 
         port = self.port_selector.currentData()
         baud = int(self.baud_selector.currentText())
-        if port:
+        
+        if GRBLController.debug:
+            self.load_button.setEnabled(True)
+        elif port:
             try:
                 self.serial_port = serial.Serial(port, baud, timeout=1)
                 time.sleep(2)
@@ -776,8 +780,6 @@ class GRBLController(QWidget):
             except serial.SerialException as e:
                 self.comm.update_status_signal.emit(f"Serial error: {e}")
         else:
-            if GRBLController.debug:
-                self.load_button.setEnabled(True)
             self.comm.update_status_signal.emit("No port selected.")
 
     def disconnect_serial(self):
