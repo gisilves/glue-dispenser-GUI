@@ -61,7 +61,8 @@ class GRBLController(QWidget):
         self.glued_coordinates = [(0, 0)]
         self.x_position = 0
         self.y_position = 0
-        self.maximumTravel = 990
+        self.x_maximumTravel = 990
+        self.y_maximumTravel = 490
         self.thread = None
         self.comm = Communicator()
         self.comm.update_status_signal.connect(self.update_status)
@@ -460,7 +461,7 @@ class GRBLController(QWidget):
         if self.coordinates[1:]:
             x_vals, y_vals = zip(*self.coordinates)
             x0 = min(sorted(set(x_vals)))
-            y0 = heapq.nsmallest(3, sorted(set(y_vals)))[1]
+            y0 = sorted(set(y_vals))[1]
         else:
             QMessageBox.warning(self, "WARNING", "No coordinates loaded", QMessageBox.Abort)
             return
@@ -579,7 +580,6 @@ class GRBLController(QWidget):
 
         If the application is in debug mode, the command is printed instead of sent.
 
-        TODO: Replace with actual position tracking when available.
         """
         if self.sender() == self.btnYplus or self.sender() == self.btnXplus:
             direction = +1
@@ -589,13 +589,13 @@ class GRBLController(QWidget):
         axis = "Y" if self.sender() in [self.btnYplus, self.btnYminus] else 'X'
         steps = int(self.x_steps_selector.text()) if axis == 'X' else int(self.y_steps_selector.text())
         
-        current_x, current_y = self.get_current_position()  # TODO: Replace with actual position tracking
+        current_x, current_y = self.get_current_position()
 
         # If movement results in value less than 0, clip it to a bit over 0
         if (current_x + direction * steps if axis == 'X' else current_y + direction * steps) < 0:
             command = f"G00 {axis}{current_x + 0.001 if axis == 'X' else current_y + 0.001}"
         else:
-            command = f"G00 {axis}{direction * steps}"
+            command = f"G01 {axis}{direction * steps}"
 
         self.sending = True
         self.comm.update_status_signal.emit(f"Moving {axis} by {direction * steps} mm")
@@ -619,7 +619,6 @@ class GRBLController(QWidget):
 
         If the application is in debug mode, the command is printed instead of sent.
 
-        TODO: Replace with actual position tracking when available.
         """
         self.comm.update_status_signal.emit("Moving to home position")
         self.sending = True
@@ -696,15 +695,34 @@ class GRBLController(QWidget):
         self.y_position = current_y + y_change
         
     def get_current_position(self):
-        # Replace with actual logic to get the current position
-        # Read value from variable for now
         """
-        Get the current position of the toolhead in the X and Y directions.
+        Query GRBL for the actual machine position using the '?' status report.
 
         Returns:
-            tuple: A tuple of two floats representing the current X and Y positions of the toolhead.
+            tuple: (x, y) machine position. Falls back to last known
+            software-tracked position if the query fails or times out.
         """
-        return self.x_position, self.y_position
+        if GRBLController.debug or not self.connected or not self.serial_port:
+            return self.x_position, self.y_position
+
+        try:
+            self.serial_port.write(b'?')
+            deadline = time.time() + 0.5  # 500ms timeout
+            while time.time() < deadline:
+                line = self.serial_port.readline().decode(errors='ignore').strip()
+                if line.startswith('<') and line.endswith('>'):
+                    match = re.search(r'(?:MPos|WPos):([-.\d]+),([-.\d]+),([-.\d]+)', line)
+                    if match:
+                        x = float(match.group(1))
+                        y = float(match.group(2))
+                        self.x_position = x
+                        self.y_position = y
+                        return x, y
+            # No valid status line received in time
+            return self.x_position, self.y_position
+        except serial.SerialException as e:
+            self.comm.update_status_signal.emit(f"Serial error while querying position: {e}")
+            return self.x_position, self.y_position
     
     def scan_ports(self):
         """
@@ -761,6 +779,9 @@ class GRBLController(QWidget):
         
         if GRBLController.debug:
             self.load_button.setEnabled(True)
+            self.connected = True
+            self.connect_button.setText("Disconnect")
+            self.comm.update_status_signal.emit(f"(Virtual) Connected to {port} at {baud} baud.")
         elif port:
             try:
                 self.serial_port = serial.Serial(port, baud, timeout=1)
@@ -905,12 +926,13 @@ class GRBLController(QWidget):
                         else:
                             current_x = x
                             current_y = y
+                            print(f"Absolute positioning: {current_x}, {current_y}")
 
                         self.coordinates.append((current_x, current_y))
                         self.movement_type.append(movement_type)
                     
                     if '$130' in line:
-                        self.maximumTravel = line[5:8]
+                        self.x_maximumTravel = line[5:8]
                         
                 if "; ------- Glue deposition -------" in line:
                     in_glue_block = True
@@ -1002,16 +1024,20 @@ class GRBLController(QWidget):
             self.ax.plot(x_vals, y_vals, linestyle='--', color=pointcolor, label='Toolpath')
             self.ax.scatter(x_vals, y_vals, color=pointcolor, s=50)
         
-        self.ax.set_xlim(-50, max(x_vals) + 50)
-        self.ax.set_ylim(-50, max(y_vals) + 50)
+        self.ax.set_xlim(-50, int(self.x_maximumTravel) + 50)
+        self.ax.set_ylim(-50, int(self.y_maximumTravel) + 50)
         
         self.ax.set_xlabel("X Axis")
         self.ax.set_ylabel("Y Axis")
+        
+        # Round all coordinates to one decimal place
+        x_vals = [round(x, 1) for x in x_vals]
+        y_vals = [round(y, 1) for y in y_vals]
 
         # Find all unique x and y values
         unique_x = sorted(set(x_vals))
         unique_y = sorted(set(y_vals))
-
+        
         col_num, row_num = 0, -1
         # Add a line for each unique x and y value
         for x in unique_x:
@@ -1031,8 +1057,10 @@ class GRBLController(QWidget):
         self.ax.set_aspect('equal', adjustable='box')
         
         # Check if the last line is over the maximum allowed travel
-        if max(x_vals) >= float(self.maximumTravel):
+        if max(x_vals) >= float(self.x_maximumTravel):
             QMessageBox.warning(self, "WARNING", "The last line is over the maximum allowed travel", QMessageBox.Ok)
+        if max(y_vals) >= float(self.y_maximumTravel):
+            QMessageBox.warning(self, "WARNING", "The last column is over the maximum allowed travel", QMessageBox.Ok)
         self.canvas.draw()
 
     def plot_glued_toolpath(self):
@@ -1195,13 +1223,14 @@ class GRBLController(QWidget):
                 if GRBLController.debug:
                     self.print_lines([f"G{block['movement_type']} X{block['x']} Y{block['y']}"])
                     if block == self.toolpath[first_block]:
+                        self.toggle_pause()  # Pause the transmission
                         print("First block reached, emitting signal")  # Debug print
                         self.comm.update_status_signal.emit("First point reached")
                         self.comm.first_block_signal.emit()  # Emit the signal
-                        time.sleep(5)
                 else:
                     self.send_lines([f"G{block['movement_type']} X{block['x']} Y{block['y']}"])
                     if block == self.toolpath[first_block]:
+                        self.toggle_pause()  # Pause the transmission
                         self.comm.update_status_signal.emit("Moving to first point")
                         self.comm.first_block_signal.emit()  # Emit the signal
   
@@ -1299,7 +1328,7 @@ class GRBLController(QWidget):
 
         :raises Exception: If any error occurs
         """
-        self.toggle_pause()  # Pause the transmission
+        self.update_status("Pausing transmission")
         self.show_message_box_signal.emit()  # Emit the signal to show the message box
     
     def show_message_box(self):
