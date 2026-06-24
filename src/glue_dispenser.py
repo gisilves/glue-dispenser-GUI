@@ -595,7 +595,7 @@ class GRBLController(QWidget):
         if (current_x + direction * steps if axis == 'X' else current_y + direction * steps) < 0:
             command = f"G00 {axis}{current_x + 0.001 if axis == 'X' else current_y + 0.001}"
         else:
-            command = f"G01 {axis}{direction * steps}"
+            command = f"G00 {axis}{direction * steps}"
 
         self.sending = True
         self.comm.update_status_signal.emit(f"Moving {axis} by {direction * steps} mm")
@@ -899,6 +899,8 @@ class GRBLController(QWidget):
         command_pattern = re.compile(r'G(\d+)(?:X([-.\d]+))?(?:Y([-.\d]+))?')
 
         with open(file_path, 'r') as file:
+            pending_glue_block = None
+            
             for line in file:
                 line = line.strip()
 
@@ -926,7 +928,6 @@ class GRBLController(QWidget):
                         else:
                             current_x = x
                             current_y = y
-                            print(f"Absolute positioning: {current_x}, {current_y}")
 
                         self.coordinates.append((current_x, current_y))
                         self.movement_type.append(movement_type)
@@ -937,13 +938,19 @@ class GRBLController(QWidget):
                 if "; ------- Glue deposition -------" in line:
                     in_glue_block = True
                     current_glue_commands = [line]
+                    # Capture current position NOW, not after end marker
+                    pending_glue_block = {
+                        'x': current_x, 'y': current_y,
+                        'glue_commands': [],
+                        'movement_type': movement_type
+                    }
                     continue
                 elif "; ------- End of glue deposition -------" in line:
                     in_glue_block = False
                     current_glue_commands.append(line)
-                    if self.coordinates:
-                        x, y = self.coordinates[-1]
-                        self.toolpath.append({'x': x, 'y': y, 'glue_commands': current_glue_commands.copy(), 'movement_type' : self.movement_type[-1]})
+                    pending_glue_block['glue_commands'] = current_glue_commands.copy()
+                    self.toolpath.append(pending_glue_block)
+                    pending_glue_block = None
                     current_glue_commands = []
                     continue
 
@@ -951,24 +958,37 @@ class GRBLController(QWidget):
                     current_glue_commands.append(line)
 
                 if not in_init_block:
-                    
                     x, y, movement_type = self.match_pattern(line, command_pattern)
-                    
+
                     if 'G90' in line:
                         is_relative = False
                     elif 'G91' in line:
                         is_relative = True
-                        
-                    if is_relative:
-                        current_x += x
-                        current_y += y
-                    else:
-                        current_x = x
-                        current_y = y
+
+                    if 'G00' in line or 'G01' in line:
+                        x, y, movement_type = self.match_pattern(line, command_pattern)
+
+                        if is_relative:
+                            current_x += x
+                            current_y += y
+                        else:
+                            current_x = x
+                            current_y = y
+
+                        # If a glue block was waiting for its destination, fill it in now
+                        if pending_glue_block is not None:
+                            pending_glue_block['x'] = current_x
+                            pending_glue_block['y'] = current_y
+                            pending_glue_block['movement_type'] = movement_type
+                            self.toolpath.append(pending_glue_block)
+                            pending_glue_block = None
 
                     self.coordinates.append((current_x, current_y))
                     self.movement_type.append(movement_type)
 
+            # Flush for last glue block
+            if pending_glue_block is not None and pending_glue_block['x'] is not None:
+                self.toolpath.append(pending_glue_block)
             # Update the first and last block selectors
             self.first_block_selector.clear()
             self.first_block_selector.addItems([str(i) for i in range(len(self.toolpath))])
@@ -1129,7 +1149,8 @@ class GRBLController(QWidget):
         This method sets the sending and paused flags to False and updates the UI elements 
         to reflect that the G-code sending has been stopped. It enables the start button 
         and disables the pause and stop buttons. Additionally, it emits a status signal 
-        indicating that the G-code sending has been stopped.
+        indicating that the G-code sending has been stopped. Finally it sends a G-code
+        command to raise the syringe.
         """
 
         self.sending = False
@@ -1142,6 +1163,8 @@ class GRBLController(QWidget):
         self.stop_button.setEnabled(False)
         self.first_block_selector.setEnabled(True)
         self.last_block_selector.setEnabled(True)
+        self.raise_syringe()
+        
 
     def start_sending(self):
         """
@@ -1212,38 +1235,37 @@ class GRBLController(QWidget):
             self.last_block_selector.setEnabled(False)
 
             # Send each command block in the toolpath
-            for block in self.toolpath[first_block:last_block + 1]:
+            for i, block in enumerate(self.toolpath[first_block:last_block + 1]):
+                self.plot_glued_toolpath()
 
                 if not self.sending:
                     break
 
                 while self.paused:
                     time.sleep(0.1)
-                # Send movement command
+
                 if GRBLController.debug:
+                    self.print_lines([f"Debug mode enabled, sending movement commands"])
                     self.print_lines([f"G{block['movement_type']} X{block['x']} Y{block['y']}"])
-                    if block == self.toolpath[first_block]:
-                        self.toggle_pause()  # Pause the transmission
-                        print("First block reached, emitting signal")  # Debug print
+                    if i == 0:
+                        self.toggle_pause()
+                        print("First block reached, emitting signal")
                         self.comm.update_status_signal.emit("First point reached")
-                        self.comm.first_block_signal.emit()  # Emit the signal
+                        self.comm.first_block_signal.emit()
                 else:
                     self.send_lines([f"G{block['movement_type']} X{block['x']} Y{block['y']}"])
-                    if block == self.toolpath[first_block]:
-                        self.toggle_pause()  # Pause the transmission
+                    if i == 0:
+                        self.toggle_pause()
                         self.comm.update_status_signal.emit("Moving to first point")
-                        self.comm.first_block_signal.emit()  # Emit the signal
-  
+                        self.comm.first_block_signal.emit()
 
-                # Send glue deposition commands
                 if GRBLController.debug:
                     self.print_lines(block['glue_commands'])
                 else:
                     self.send_lines(block['glue_commands'])
 
                 self.glued_coordinates.append((block['x'], block['y']))
-                self.plot_glued_toolpath()
-
+    
             self.comm.update_status_signal.emit("Finished sending G-code.")
         except serial.SerialException as e:
             self.comm.update_status_signal.emit(f"Serial error: {e}")
@@ -1310,7 +1332,7 @@ class GRBLController(QWidget):
                 time.sleep(0.1)
             print((line))
             self.comm.update_status_signal.emit(f"Sent: {line}")
-            time.sleep(0.25)
+            time.sleep(0.1)
 
     def update_status(self, message):
         """
