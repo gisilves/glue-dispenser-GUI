@@ -64,6 +64,7 @@ class GRBLController(QWidget):
         self.x_maximumTravel = 990
         self.y_maximumTravel = 490
         self.thread = None
+        self.serial_lock = threading.Lock()
         self.comm = Communicator()
         self.comm.update_status_signal.connect(self.update_status)
         self.comm.first_block_signal.connect(self.first_point_reached)
@@ -1176,15 +1177,26 @@ class GRBLController(QWidget):
 
         self.sending = False
         self.paused = False
+
+        if not GRBLController.debug and self.serial_port and self.serial_port.is_open:
+            try:
+                with self.serial_lock:
+                    self.serial_port.write(b'!')          # feed hold
+                    time.sleep(0.1)
+                    self.serial_port.write(bytes([0x18])) # soft reset (Ctrl-X)
+                    time.sleep(0.5)
+                    self.serial_port.flushInput()
+                self.send_lines(['$X'])  # re-unlock after reset
+            except serial.SerialException as e:
+                self.comm.update_status_signal.emit(f"Serial error on stop: {e}")
+
         self.start_button.setEnabled(True)
         self.comm.update_status_signal.emit("G-code sending stopped.")
-        self.paused = False
         self.pause_button.setStyleSheet(self.small_enabled_button_style)
         self.pause_button.setEnabled(False)
         self.stop_button.setEnabled(False)
         self.first_block_selector.setEnabled(True)
         self.last_block_selector.setEnabled(True)
-        self.raise_syringe()
         
 
     def start_sending(self):
@@ -1318,13 +1330,26 @@ class GRBLController(QWidget):
                 time.sleep(0.1)
 
             try:
-                self.serial_port.write((line + '\n').encode())
+                with self.serial_lock:
+                    self.serial_port.write((line + '\n').encode())
                 self.comm.update_status_signal.emit(f"Sent: {line}")
-                while True:
-                    response = self.serial_port.readline().decode().strip()
+
+                deadline = time.time() + 5.0  # max wait per line
+                got_ok = False
+                while time.time() < deadline:
+                    if not self.sending:
+                        return  # Stop was pressed — abandon mid-line
+                    with self.serial_lock:
+                        response = self.serial_port.readline().decode(errors='ignore').strip()
                     if response == 'ok':
+                        got_ok = True
                         break
-                    time.sleep(0.1)
+                    time.sleep(0.05)
+
+                if not got_ok:
+                    self.comm.update_status_signal.emit(f"Timeout waiting for ack on: {line}")
+                    self.sending = False
+                    return
 
             except serial.SerialException as e:
                 self.comm.update_status_signal.emit(f"Serial error while sending: {e}")

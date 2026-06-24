@@ -49,7 +49,7 @@ jobs:
           cp README.md application/
 
       - name: Zip application folder
-        run: powershell Compress-Archive -Path application -DestinationPath application.zip
+        run: powershell Compress-Archive -Path application -DestinationPath glue_dispenser.zip
 
       - name: Create Release and Upload Asset
         uses: softprops/action-gh-release@v2
@@ -58,6 +58,6 @@ jobs:
           name: ${{ env.RELEASE_TAG }}
           draft: false
           prerelease: false
-          files: application.zip
+          files: glue_dispenser.zip
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
