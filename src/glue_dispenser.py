@@ -605,27 +605,36 @@ class GRBLController(QWidget):
         steps = int(self.x_steps_selector.text()) if axis == 'X' else int(self.y_steps_selector.text())
         
         current_x, current_y = self.get_current_position()
-
+        
         # If movement results in value less than 0, clip it to a bit over 0
         if (current_x + direction * steps if axis == 'X' else current_y + direction * steps) < 0:
-            command = f"G00 {axis}{current_x + 0.001 if axis == 'X' else current_y + 0.001}"
+            command = f"G00 {axis}{0.001}"
+            if GRBLController.debug:
+                # Set position to avoid clipping
+                if axis == 'X':
+                    self.x_position = 0.001
+                else:
+                    self.y_position = 0.001
         else:
             command = f"G00 {axis}{direction * steps}"
 
         self.sending = True
         self.comm.update_status_signal.emit(f"Moving {axis} by {direction * steps} mm")
 
+        relative_command = f"G91"
+        absolute_command = f"G90"
+
         if GRBLController.debug:
             print("In debug mode, not sending command.")
-            self.print_lines("G91")
+            self.print_lines([relative_command])
             self.print_lines([command])
-            self.print_lines("G90")
+            self.print_lines([absolute_command])
         else:
             print("Sending command to serial port")
-            self.send_lines("G91")
+            self.send_lines([relative_command])
             self.send_lines([command])
-            self.send_lines("G90")
-
+            self.send_lines([absolute_command])
+        
         self.update_position(direction * steps if axis == 'X' else 0, direction * steps if axis == "Y" else 0)
         self.sending = False
 
@@ -651,7 +660,10 @@ class GRBLController(QWidget):
             self.x_position = 0
             self.y_position = 0  # Reset position to home
         self.sending = False
-
+        
+        # Update position label
+        self.update_position(0, 0)
+        
         # Enable movement buttons
         self.btnYplus.setEnabled(True)
         self.btnYplus.setStyleSheet(self.enabled_button_style)
@@ -725,6 +737,7 @@ class GRBLController(QWidget):
             software-tracked position if the query fails or times out.
         """
         if GRBLController.debug or not self.connected or not self.serial_port:
+            print("Not connected to serial port, returning last known position.")
             return self.x_position, self.y_position
 
         try:
@@ -804,6 +817,10 @@ class GRBLController(QWidget):
             self.connected = True
             self.connect_button.setText("Disconnect")
             self.comm.update_status_signal.emit(f"(Virtual) Connected to {port} at {baud} baud.")
+            # Enable home control
+            self.btnHome.setEnabled(True)
+            self.btnHome.setStyleSheet(self.enabled_button_style)
+
         elif port:
             try:
                 self.serial_port = serial.Serial(port, baud, timeout=1)
