@@ -92,6 +92,18 @@ class GRBLController(QWidget):
             border-radius: 5px;
         """)
         main_layout.addWidget(self.status_label)
+        
+        # Current position label (under jog controls)
+        self.position_label = QLabel("Current Position: n/a")
+        self.position_label.setStyleSheet("""
+            font-size: 18px; 
+            font-weight: bold; 
+            color: white; 
+            background-color: #2e3a47;
+            padding: 10px;
+            border-radius: 5px;
+            max-height: 30px;
+        """)
 
         self.small_enabled_button_style = """
             QPushButton {
@@ -383,6 +395,8 @@ class GRBLController(QWidget):
         grid.addWidget(self.btnXplus, 1, 2)
         grid.addWidget(self.btnXminus, 1, 0)
         grid.addWidget(self.btnHome, 1, 1)
+        # Add current position label
+        grid.addWidget(self.position_label, 3, 0, 1, 3)
         
         additional_layout.addLayout(grid)
 
@@ -602,10 +616,14 @@ class GRBLController(QWidget):
 
         if GRBLController.debug:
             print("In debug mode, not sending command.")
+            self.print_lines("G91")
             self.print_lines([command])
+            self.print_lines("G90")
         else:
             print("Sending command to serial port")
+            self.send_lines("G91")
             self.send_lines([command])
+            self.send_lines("G90")
 
         self.update_position(direction * steps if axis == 'X' else 0, direction * steps if axis == "Y" else 0)
         self.sending = False
@@ -693,6 +711,9 @@ class GRBLController(QWidget):
         current_x, current_y = self.get_current_position()  # Replace with actual position tracking
         self.x_position = current_x + x_change
         self.y_position = current_y + y_change
+        
+        # Update current position label
+        self.position_label.setText(f"Current Position: X{self.x_position:.3f}, Y{self.y_position:.3f}")
         
     def get_current_position(self):
         """
